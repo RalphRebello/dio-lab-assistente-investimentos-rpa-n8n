@@ -1,0 +1,199 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1184,
+        80
+      ],
+      "id": "d77a6b47-04b5-401f-98fa-6922d2954080",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/RalphRebello/dio-lab-assistente-investimentos-rpa-n8n/refs/heads/main/docs/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        128,
+        160
+      ],
+      "id": "6621b37a-c951-4f8c-bfb4-5b804a96eed8",
+      "name": "HTTP Request (Investiment type)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega o CSV como texto vindo do HTTP Request\nconst csvRaw = $json.data ?? $json.body ?? $json;\nconst text = (typeof csvRaw === \"string\") ? csvRaw : JSON.stringify(csvRaw);\n\nconst lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\nconst headers = lines[0].split(\",\").map(h => h.trim());\n\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n  headers.forEach((h, i) => obj[h] = cols[i] ?? \"\");\n\n  // normaliza mínimo para número\n  obj.minimo = Number(String(obj.minimo).replace(/[^\\d]/g, \"\")) || 0;\n\n  return obj;\n});\n\nreturn [{ json: { investimentos } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        80
+      ],
+      "id": "90337fc4-ceae-4153-9be8-fb90034ec207",
+      "name": "Code in JavaScript (Normalizar dados)"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        496,
+        -96
+      ],
+      "id": "37efb1c5-8676-4840-8a16-01a2600d2710",
+      "name": "Merge (Combinar dados de cliente e investimentos)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dados vindos do nó anterior (webhook + investimentos)\nconst data = $input.first().json;\nconst clientes = data.body?.clientes ?? data.clientes ?? [];\nconst investimentos = data.investimentos ?? [];\n\n// \"R$ 12.500,00\" -> 12500\nfunction parseSaldo(valor) {\n  if (typeof valor === \"number\") return valor;\n  const limpo = String(valor)\n    .replace(/[^\\d,]/g, \"\")   // mantém só dígitos e vírgula\n    .replace(\",\", \".\");       // vírgula decimal -> ponto\n  return Number(limpo) || 0;\n}\n\n// 12500 -> \"R$ 12.500,00\"\nfunction formatBRL(valor) {\n  return valor.toLocaleString(\"pt-BR\", { style: \"currency\", currency: \"BRL\" });\n}\n\n// Mensagem de abertura para cada perfil\nconst introPorPerfil = {\n  Conservador: \"Sabemos que segurança e tranquilidade vêm em primeiro lugar para você. Por isso, selecionamos opções de baixo risco e boa liquidez:\",\n  Moderado: \"Você busca equilíbrio entre segurança e rentabilidade. Separamos opções que diversificam sua carteira sem abrir mão do controle:\",\n  Arrojado: \"Você tem apetite para buscar retornos maiores no longo prazo. Confira oportunidades com maior potencial de valorização:\",\n};\n\n// Descrição curta para cada tipo de investimento\nconst descricaoPorProduto = {\n  \"Poupança\": \"simples, isenta de IR e com resgate a qualquer momento\",\n  \"CDB Liquidez Diária\": \"rende mais que a poupança e você resgata quando quiser\",\n  \"Tesouro Selic\": \"título público, ideal para reserva de emergência\",\n  \"CDB Prefixado\": \"você já sabe na aplicação quanto vai receber no vencimento\",\n  \"Fundo Multimercado\": \"gestão profissional combinando renda fixa, ações e câmbio\",\n  \"Tesouro IPCA+\": \"protege seu dinheiro da inflação com ganho real\",\n  \"Ações ETF\": \"diversificação na bolsa com um único ativo e custo baixo\",\n  \"Fundo de Ações\": \"carteira de ações escolhida por gestores especialistas\",\n  \"Criptomoedas\": \"alta volatilidade, indicada só para uma pequena parte da carteira\",\n};\n\n// Aviso final para cada perfil\nconst avisoPorPerfil = {\n  Conservador: \"Quer ajuda para montar sua reserva de emergência? É só responder este e-mail.\",\n  Moderado: \"Podemos agendar uma conversa para ajustar a diversificação da sua carteira.\",\n  Arrojado: \"Lembre-se: investimentos de renda variável podem oscilar e não têm rentabilidade garantida.\",\n};\n\nreturn clientes.map(cliente => {\n  const saldo = parseSaldo(cliente.saldo);\n  const primeiroNome = cliente.nome.split(\" \")[0];\n\n  // Filtra pelo perfil do cliente e pelo saldo disponível\n  const elegiveis = investimentos.filter(inv =>\n    inv.perfil === cliente.perfil && Number(inv.minimo) <= saldo\n  );\n\n  const bloqueados = investimentos.filter(inv =>\n    inv.perfil === cliente.perfil && Number(inv.minimo) > saldo\n  );\n\n  let mensagem;\n\n  if (elegiveis.length === 0) {\n    mensagem =\n      `Olá, ${primeiroNome}!\\n\\n` +\n      `Com seu saldo atual de ${formatBRL(saldo)}, ainda não há produtos do perfil ${cliente.perfil} ` +\n      `disponíveis para você. Que tal começar a poupar um pouco por mês? Estamos aqui para ajudar.\\n\\n` +\n      `Equipe de Investimentos`;\n  } else {\n    const lista = elegiveis\n      .map(inv =>\n        `• ${inv.produto} — rentabilidade: ${inv.rentabilidade} | mínimo: ${formatBRL(Number(inv.minimo))}\\n` +\n        `  ${descricaoPorProduto[inv.produto] ?? \"\"}`\n      )\n      .join(\"\\n\");\n\n    const extra = bloqueados.length\n      ? `\\n\\nAo atingir o valor mínimo, você também poderá investir em: ` +\n        bloqueados.map(inv => `${inv.produto} (a partir de ${formatBRL(Number(inv.minimo))})`).join(\", \") + \".\"\n      : \"\";\n\n    mensagem =\n      `Olá, ${primeiroNome}!\\n\\n` +\n      `${introPorPerfil[cliente.perfil] ?? \"Confira as opções disponíveis para você:\"}\\n\\n` +\n      `${lista}` +\n      `${extra}\\n\\n` +\n      `Seu saldo disponível: ${formatBRL(saldo)}\\n\\n` +\n      `${avisoPorPerfil[cliente.perfil] ?? \"\"}\\n\\n` +\n      `Equipe de Investimentos`;\n  }\n\n  return {\n    json: {\n      nome: cliente.nome,\n      email: cliente.email,\n      perfil: cliente.perfil,\n      saldo,\n      assunto: `${primeiroNome}, investimentos selecionados para o seu perfil ${cliente.perfil}`,\n      mensagem,\n      recomendados: elegiveis.map(inv => inv.produto),\n    },\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        80
+      ],
+      "id": "0763fae8-86da-4885-9c84-437624df3f6f",
+      "name": "(Respostas para clientes)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -96,
+        80
+      ],
+      "id": "b3974ea4-7b5a-4c37-ac28-9fd74c898e0f",
+      "name": "Webhook (Info Clientes)",
+      "webhookId": "7a9b3b06-7b5b-483a-9dd2-676c01b1a606"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aceita tanto vários itens quanto um único item contendo um array\nconst entrada = $input.all().flatMap(item =>\n  Array.isArray(item.json) ? item.json : [item.json]\n);\n\n// Remove espaços extras\nconst limpar = v => String(v ?? \"\").replace(/\\s+/g, \" \").trim();\n\n// \"ana silva\" -> \"Ana Silva\"\nconst capitalizar = v =>\n  limpar(v)\n    .toLowerCase()\n    .replace(/(^|\\s)\\p{L}/gu, letra => letra.toUpperCase());\n\n// Aceita número ou \"R$ 12.500,00\"\nfunction parseValor(v) {\n  if (typeof v === \"number\") return v;\n  return Number(String(v).replace(/[^\\d,]/g, \"\").replace(\",\", \".\")) || 0;\n}\n\nconst formatBRL = v =>\n  v.toLocaleString(\"pt-BR\", { style: \"currency\", currency: \"BRL\" });\n\nconst emailValido = e => /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(e);\n\n// Escapa caracteres especiais e converte quebras de linha para HTML\nfunction textoParaHtml(texto) {\n  return texto\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .split(/\\n{2,}/)\n    .map(paragrafo => `<p>${paragrafo.replace(/\\n/g, \"<br>\")}</p>`)\n    .join(\"\\n\");\n}\n\nconst vistos = new Set();\nconst resultado = [];\n\nfor (const c of entrada) {\n  const email = limpar(c.email).toLowerCase();\n\n  // Ignora e-mails duplicados\n  if (vistos.has(email)) continue;\n  vistos.add(email);\n\n  const nome = capitalizar(c.nome);\n  const saldo = parseValor(c.saldo);\n  const recomendados = (c.recomendados ?? []).map(limpar).filter(Boolean);\n  const mensagemTexto = String(c.mensagem ?? \"\").replace(/\\r\\n/g, \"\\n\").trim();\n\n  resultado.push({\n    json: {\n      nome,\n      primeiroNome: nome.split(\" \")[0],\n      email,\n      emailValido: emailValido(email),\n      perfil: capitalizar(c.perfil),\n      perfilId: limpar(c.perfil).toLowerCase(), // \"conservador\", \"moderado\", \"arrojado\"\n      saldo,\n      saldoFormatado: formatBRL(saldo),\n      assunto: limpar(c.assunto),\n      mensagemTexto,\n      mensagemHtml: textoParaHtml(mensagemTexto),\n      recomendados,\n      recomendadosTexto: recomendados.join(\", \"),\n      totalRecomendados: recomendados.length,\n      geradoEm: new Date().toISOString(),\n    },\n  });\n}\n\nreturn resultado;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        80
+      ],
+      "id": "dbe49dc6-1178-4130-94ab-dfdbd9797ffc",
+      "name": "Normalizar Dados finais"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request (Investiment type)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript (Normalizar dados)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript (Normalizar dados)": {
+      "main": [
+        [
+          {
+            "node": "Merge (Combinar dados de cliente e investimentos)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge (Combinar dados de cliente e investimentos)": {
+      "main": [
+        [
+          {
+            "node": "(Respostas para clientes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "(Respostas para clientes)": {
+      "main": [
+        [
+          {
+            "node": "Normalizar Dados finais",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook (Info Clientes)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request (Investiment type)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge (Combinar dados de cliente e investimentos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar Dados finais": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4fffd82b-8ae0-4227-9fa8-f6ef60e76518",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e7968151980c47c06d59445ef98859510e2f7eea459f7dbc4e8c8918e51e62af"
+  },
+  "nodeGroups": [],
+  "id": "BnDJfRsBJ1p7aXKJ",
+  "tags": []
+}
